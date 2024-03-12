@@ -300,7 +300,7 @@ func (i *IPAM) removeEip(e *networkv1alpha2.Eip) error {
 			delete(clone.Labels, constant.OpenELBEIPAnnotationKeyV1Alpha2)
 		}
 		if !reflect.DeepEqual(clone, &svc) {
-			err = i.Update(context.Background(), clone)
+			err = i.Patch(context.Background(), clone, client.MergeFrom(&svc))
 			if err != nil {
 				return err
 			}

@@ -200,6 +200,7 @@ func (r *ServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func (r *ServiceReconciler) callSetLoadBalancer(result ipam.IPAMResult, svc *corev1.Service) error {
+	orig := svc.DeepCopy()
 	nodes, err := r.getServiceNodes(svc)
 	if err != nil {
 		return err
@@ -232,7 +233,7 @@ func (r *ServiceReconciler) callSetLoadBalancer(result ipam.IPAMResult, svc *cor
 			}
 			svc.Annotations[constant.OpenELBLayer2Annotation] = nodes[index].Name
 
-			err = r.Update(context.Background(), svc)
+			err = r.Patch(context.Background(), svc, client.MergeFrom(orig))
 			if err != nil {
 				return err
 			}
@@ -250,10 +251,11 @@ func (r *ServiceReconciler) callSetLoadBalancer(result ipam.IPAMResult, svc *cor
 }
 
 func (r *ServiceReconciler) callDelLoadBalancer(result ipam.IPAMResult, svc *corev1.Service) error {
+	orig := svc.DeepCopy()
 	if result.Addr != "" {
 		if svc.Annotations != nil && svc.Annotations[constant.OpenELBLayer2Annotation] != "" {
 			delete(svc.Annotations, constant.OpenELBLayer2Annotation)
-			err := r.Update(context.Background(), svc)
+			err := r.Patch(context.Background(), svc, client.MergeFrom(orig))
 			if err != nil {
 				return err
 			}
@@ -354,7 +356,7 @@ func (r *ServiceReconciler) updateServiceEipInfo(result ipam.IPAMResult, svc *co
 		delete(clone.Labels, constant.OpenELBEIPAnnotationKeyV1Alpha2)
 	}
 	if !reflect.DeepEqual(svc.Labels, clone.Labels) {
-		err := r.Update(context.Background(), clone)
+		err := r.Patch(context.Background(), clone, client.MergeFrom(svc))
 		if err != nil {
 			return err
 		}
@@ -368,7 +370,7 @@ func (r *ServiceReconciler) updateServiceEipInfo(result ipam.IPAMResult, svc *co
 		})
 	}
 	if !reflect.DeepEqual(svc.Status, clone.Status) {
-		err := r.Status().Update(context.Background(), clone)
+		err := r.Status().Patch(context.Background(), clone, client.MergeFrom(svc))
 		if err != nil {
 			return err
 		}
@@ -455,7 +457,7 @@ func (r *ServiceReconciler) getServiceNodes(svc *corev1.Service) ([]corev1.Node,
 	if svc.Spec.ExternalTrafficPolicy == corev1.ServiceExternalTrafficPolicyTypeLocal && len(active) == 0 {
 		clone := svc.DeepCopy()
 		clone.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
-		_ = r.Update(context.Background(), clone)
+		_ = r.Patch(context.Background(), clone, client.MergeFrom(svc))
 		r.log.Info(fmt.Sprintf("endpoint don't have nodeName, so cannot set externalTrafficPolicy to Local"))
 	}
 
@@ -509,17 +511,16 @@ func (r *SvcAnnotator) Handle(ctx context.Context, req admission.Request) admiss
 	if err := r.decoder.Decode(req, svc); err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
 	}
+	origMarshaledSvc, err := json.Marshal(svc)
+	if err != nil {
+		return admission.Errored(http.StatusInternalServerError, err)
+	}
 	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
-		marshaledSvc, err := json.Marshal(svc)
-		if err != nil {
-			return admission.Errored(http.StatusInternalServerError, err)
-		}
-		return admission.PatchResponseFromRaw(req.Object.Raw, marshaledSvc)
+		return admission.Allowed("")
 	}
 	// check default eip
 	eips := networkv1alpha2.EipList{}
-	err := r.List(context.Background(), &eips)
-	if err != nil {
+	if err := r.List(context.Background(), &eips); err != nil {
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
 	for _, eip := range eips.Items {
@@ -542,5 +543,5 @@ func (r *SvcAnnotator) Handle(ctx context.Context, req admission.Request) admiss
 	if err != nil {
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
-	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledSvc)
+	return admission.PatchResponseFromRaw(origMarshaledSvc, marshaledSvc)
 }
