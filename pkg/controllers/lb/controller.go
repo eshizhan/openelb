@@ -207,13 +207,12 @@ func (r *ServiceReconciler) callSetLoadBalancer(result ipam.IPAMResult, svc *cor
 	}
 
 	svcIP := result.Addr
+	if len(nodes) == 0 {
+		return result.Sp.DelBalancer(svcIP)
+	}
 
 	var announceNodes []corev1.Node
 	if result.Protocol == constant.OpenELBProtocolLayer2 {
-		if len(nodes) == 0 {
-			return result.Sp.DelBalancer(svcIP)
-		}
-
 		index := rand.Int() % len(nodes)
 		found := false
 		preNode, ok := svc.Annotations[constant.OpenELBLayer2Annotation]
@@ -426,13 +425,14 @@ func (r *ServiceReconciler) getServiceNodes(svc *corev1.Service) ([]corev1.Node,
 		return nil, err
 	}
 
-	active := make(map[string]bool)
+	activeNodeNames := make(map[string]bool)
+	hasActive := false
 	for _, subnet := range endpoints.Subsets {
 		for _, addr := range subnet.Addresses {
-			if addr.NodeName == nil {
-				continue
+			hasActive = true
+			if addr.NodeName != nil {
+				activeNodeNames[*addr.NodeName] = true
 			}
-			active[*addr.NodeName] = true
 		}
 	}
 
@@ -444,9 +444,13 @@ func (r *ServiceReconciler) getServiceNodes(svc *corev1.Service) ([]corev1.Node,
 	}
 
 	resultNodes := make([]corev1.Node, 0)
-	if svc.Spec.ExternalTrafficPolicy == corev1.ServiceExternalTrafficPolicyTypeLocal && len(active) > 0 {
+	if !hasActive {
+		return resultNodes, nil
+	}
+
+	if svc.Spec.ExternalTrafficPolicy == corev1.ServiceExternalTrafficPolicyTypeLocal && len(activeNodeNames) > 0 {
 		for _, node := range nodeList.Items {
-			if active[node.Name] {
+			if activeNodeNames[node.Name] {
 				resultNodes = append(resultNodes, node)
 			}
 		}
@@ -454,7 +458,7 @@ func (r *ServiceReconciler) getServiceNodes(svc *corev1.Service) ([]corev1.Node,
 		return resultNodes, nil
 	}
 
-	if svc.Spec.ExternalTrafficPolicy == corev1.ServiceExternalTrafficPolicyTypeLocal && len(active) == 0 {
+	if svc.Spec.ExternalTrafficPolicy == corev1.ServiceExternalTrafficPolicyTypeLocal && len(activeNodeNames) == 0 {
 		clone := svc.DeepCopy()
 		clone.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
 		_ = r.Patch(context.Background(), clone, client.MergeFrom(svc))

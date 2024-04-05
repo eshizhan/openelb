@@ -388,13 +388,9 @@ var _ = Describe("OpenELB LoadBalancer Service", func() {
 				}
 			})
 		})
-		It("the nexthops should not be empty", func() {
+		It("the nexthops should be empty", func() {
 			Eventually(checkSvc(svc, func(dst *corev1.Service) bool {
-				return bgpFakeSpeak.Equal(dst.Status.LoadBalancer.Ingress[0].IP,
-					[]string{
-						node2.Name,
-						node1.Name,
-					})
+				return bgpFakeSpeak.Equal(dst.Status.LoadBalancer.Ingress[0].IP, nil)
 			}), 3*time.Second).Should(Equal(true))
 		})
 	})
